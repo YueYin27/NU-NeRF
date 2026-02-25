@@ -1,0 +1,55 @@
+# python run_training.py --cfg configs/shape/nerf/refref.yaml
+# python extract_mesh_stage1.py --cfg configs/shape/nerf/refref.yaml
+# python render_mask.py --cfg configs/shape/nerf/refref.yaml --mesh_path <exported mesh path>
+# python mask_erosion.py --cfg configs/shape/nerf/refref.yaml --mesh_path <exported mesh path>
+# python run_training.py --cfg configs/stage2/nerf/refref.yaml
+# python extract_mesh_stage2.py --cfg configs/stage2/nerf/refref.yaml
+# python postprocess_stage2_mesh.py
+
+
+name: cube_hdr
+
+####network#####
+network: shape
+database_name: nerf/$name
+near_plane: 0.1
+far_plane: 7.5
+pose_scale: 0.5
+shader_config:
+  sphere_direction: false  # infinity far light only
+  human_light: false
+apply_occ_loss: true
+occ_loss_step: 15000
+is_nerf: true
+zero_thickness: True
+get_mask: False
+
+######loss######
+loss: ['nerf_render','eikonal','std','init_sdf_reg','occ','mask','outer_reg']
+val_metric: ['shape_render']
+key_metric_name: psnr
+eikonal_weight: 0.03
+freeze_inv_s_step: 15000
+
+####dataset#####
+train_dataset_type: dummy
+dataset_dir: /home/projects/RefRef/image_data/env_map_scene/single-convex
+train_dataset_cfg:
+  database_name: nerf/$name
+val_set_list:
+  -
+    name: val
+    type: dummy
+    cfg:
+      database_name: nerf/$name
+
+####trainier####
+use_wandb: true
+wandb_project: NU-NeRF
+optimizer_type: adam
+lr_type: warm_up_cos
+lr_cfg: {}
+total_step: 200000
+val_interval: 5000
+save_interval: 1000
+train_log_step: 20

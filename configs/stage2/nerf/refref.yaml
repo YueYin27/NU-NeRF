@@ -1,0 +1,48 @@
+name: ball_hdr
+
+####network#####
+network: stage2
+database_name: nerf/ball_hdr
+near_plane: 0.3
+far_plane: 5.0
+shader_config:
+  sphere_direction: false
+  human_light: false
+apply_occ_loss: true
+occ_loss_step: 20000
+is_nerf: true
+get_mask: false
+zero_thickness: True
+
+######loss######
+loss: ['eikonal','std','nerf_render']
+val_metric: ['stage2']
+key_metric_name: psnr
+eikonal_weight: 0.02
+freeze_inv_s_step: 5000
+
+####dataset#####
+train_dataset_type: dummy
+dataset_dir: /home/projects/RefRef/image_data/env_map_scene/single-convex
+stage1_mesh_dir: <stage1_mesh_dir>
+stage1_ckpt_dir: <stage1_ckpt_dir>
+stage1_cfg_dir: <stage1_cfg_dir>
+train_dataset_cfg:
+  database_name: nerf/ball_hdr
+val_set_list:
+  -
+    name: val
+    type: dummy
+    cfg:
+      database_name: nerf/ball_hdr
+
+####trainier####
+optimizer_type: adam
+lr_type: warm_up_cos
+lr_cfg: {}
+total_step: 150000
+val_interval: 5000
+save_interval: 1000
+train_log_step: 20
+
+downsample_ratio: 1.0
