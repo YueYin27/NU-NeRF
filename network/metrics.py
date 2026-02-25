@@ -75,12 +75,24 @@ class ShapeRenderMetrics(Loss):
 
         imgs += draw_materials(data_pr, h, w)
 
-        # output image
+        # Save ONE random image to disk AND log to wandb (same image)
         data_index = kwargs['data_index']
         model_name = kwargs['model_name']
-        output_path = Path(f'data/train_vis/{model_name}')
-        output_path.mkdir(exist_ok=True, parents=True)
-        imsave(f'{str(output_path)}/{step}-index-{data_index}.jpg', concat_images_list(*imgs, vert=True))
+        random_save_index = kwargs.get('random_save_index', 0)
+        if data_index == random_save_index:
+            try:
+                print(f'[Metrics] Saving and logging image: data_index={data_index}, random_save_index={random_save_index}, step={step}')
+                # Save to disk
+                output_path = Path(f'data/train_vis/{model_name}')
+                output_path.mkdir(exist_ok=True, parents=True)
+                imsave(f'{str(output_path)}/{step}-index-{data_index}.jpg', concat_images_list(*imgs, vert=True))
+                
+                # Return GT and predicted side-by-side for wandb: left=GT, right=pred
+                gt_img = np.clip(rgb_gt, 0, 255).astype(np.uint8)
+                pr_img = np.clip(rgb_pr, 0, 255).astype(np.uint8)
+                outputs['val_gt_pred'] = np.concatenate([gt_img, pr_img], axis=1)
+            except Exception as e:
+                print(f'[Metrics] ERROR saving/logging image: {e}')
         return outputs
 
 def draw_materials_s2(data_pr, h, w):

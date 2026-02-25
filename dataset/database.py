@@ -540,19 +540,25 @@ class CustomDatabase(BaseDatabase):
 
 
 class NeRFSyntheticDatabase(BaseDatabase):
-    def __init__(self, database_name, dataset_dir, testskip=64):
+    def __init__(self, database_name, dataset_dir, testskip=64, pose_scale=1.0, **kwargs):
         super().__init__(database_name)
         _, model_name = database_name.split('/')
         RENDER_ROOT = dataset_dir
         # RENDER_ROOT = '/media/data_nix/yzy/Git_Project/data/nerf_synthetic'
         self.root = f'{RENDER_ROOT}/{model_name}'
-        self.scale_factor = 1.0
-        print(self.scale_factor)
-        splits = ['train', 'test']
+        self.scale_factor = float(pose_scale)
+        print(f'[NeRFSyntheticDatabase] pose_scale={self.scale_factor}')
+
+        # Support explicit train/val/test splits if available.
+        # We look for transforms_train.json, transforms_val.json, transforms_test.json.
+        splits = []
         metas = {}
-        for s in splits:
-            with open(os.path.join(self.root, 'transforms_{}.json'.format(s)), 'r') as fp:
-                metas[s] = json.load(fp)
+        for s in ['train', 'val', 'test']:
+            json_path = os.path.join(self.root, f'transforms_{s}.json')
+            if os.path.exists(json_path):
+                with open(json_path, 'r') as fp:
+                    metas[s] = json.load(fp)
+                splits.append(s)
 
         all_imgs = []
         all_masks = []
@@ -564,7 +570,9 @@ class NeRFSyntheticDatabase(BaseDatabase):
             imgs = []
             masks = []
             poses = []
-            if s == 'train' or testskip == 0:
+            # For explicit val split, do NOT subsample with testskip; keep all val images.
+            # Only apply testskip to the 'test' split.
+            if s in ('train', 'val') or testskip == 0:
                 skip = 1
             else:
                 skip = testskip
@@ -591,7 +599,11 @@ class NeRFSyntheticDatabase(BaseDatabase):
             all_masks.append(masks)
             all_poses.append(poses)
 
-        i_split = [np.arange(counts[i], counts[i + 1]) for i in range(2)]
+        # Record global image-id ranges for each split so we can use train/val/test explicitly.
+        self.split_ids = {}
+        for i, s in enumerate(splits):
+            start, end = counts[i], counts[i + 1]
+            self.split_ids[s] = [str(k) for k in range(start, end)]
 
         self.imgs = np.concatenate(all_imgs, 0)
         self.all_masks = np.concatenate(all_masks,0)
@@ -651,7 +663,7 @@ class NeRFSyntheticDatabase(BaseDatabase):
         return self.all_masks[int(img_id)] / 255.0
 
 
-def parse_database_name(database_name: str, dataset_dir: str) -> BaseDatabase:
+def parse_database_name(database_name: str, dataset_dir: str, cfg=None) -> BaseDatabase:
     name2database = {
         'syn': GlossySyntheticDatabase,
         'real': GlossyRealDatabase,
@@ -660,19 +672,42 @@ def parse_database_name(database_name: str, dataset_dir: str) -> BaseDatabase:
     }
     database_type = database_name.split('/')[0]
     if database_type in name2database:
+        if database_type == 'nerf' and cfg is not None:
+            pose_scale = cfg.get('pose_scale', 1.0)
+            return name2database[database_type](database_name, dataset_dir, pose_scale=pose_scale)
         return name2database[database_type](database_name, dataset_dir)
     else:
         raise NotImplementedError
 
 def get_database_split(database: BaseDatabase, split_type='validation'):
+    """
+    Returns (train_ids, test_ids) for the requested split_type.
+
+    For NeRFSyntheticDatabase with explicit train/val/test JSONs:
+      - split_type == 'validation': train_ids = train split, test_ids = val split.
+    Otherwise falls back to the original random 90/10 split behaviour.
+    """
+    # Special handling for NeRFSyntheticDatabase when explicit splits exist.
+    if isinstance(database, NeRFSyntheticDatabase) and split_type == 'validation':
+        split_ids = getattr(database, 'split_ids', {})
+        train_ids = split_ids.get('train', None)
+        val_ids = split_ids.get('val', None)
+        if train_ids is not None and val_ids is not None:
+            print(f'[Database split] train_ids (train split): {len(train_ids)} images, '
+                  f'test_ids (validation/val split): {len(val_ids)} images')
+            return train_ids, val_ids
+        # If val split is missing, fall through to generic behaviour below.
+
     if split_type == 'validation':
         random.seed(100)
         img_ids = database.get_img_ids()
         random.shuffle(img_ids)
-        test_ids = img_ids[1:2]
-        train_ids = img_ids[:1] + img_ids[2:]
-        print(train_ids,test_ids)
-    elif split_type=='test':
+        # Use ~10% of images for validation (at least 1, up to 20 images)
+        val_size = max(1, min(20, len(img_ids) // 10))
+        test_ids = img_ids[1:1 + val_size]
+        train_ids = img_ids[:1] + img_ids[1 + val_size:]
+        print(f'[Database split] train_ids: {len(train_ids)} images, test_ids (validation): {len(test_ids)} images')
+    elif split_type == 'test':
         test_ids, train_ids = read_pickle('configs/synthetic_split_128.pkl')
     else:
         raise NotImplementedError

@@ -318,7 +318,23 @@ def compute_precision_recall_np(pr, gt, eps=1e-5):
 
 def load_cfg(path):
     with open(path, 'r') as f:
-        return yaml.load(f, Loader=yaml.FullLoader)
+        cfg = yaml.load(f, Loader=yaml.FullLoader)
+    # Substitute $name with actual name value recursively so configs can reuse `name`
+    if isinstance(cfg, dict) and 'name' in cfg:
+        cfg = _substitute_name(cfg, cfg['name'])
+    return cfg
+
+
+def _substitute_name(obj, name_value):
+    """Recursively substitute $name in strings with name_value."""
+    if isinstance(obj, dict):
+        return {k: _substitute_name(v, name_value) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_substitute_name(item, name_value) for item in obj]
+    elif isinstance(obj, str):
+        return obj.replace('$name', name_value)
+    else:
+        return obj
 
 
 def get_stem(path, suffix_len=5):

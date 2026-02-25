@@ -35,6 +35,8 @@ class Trainer:
         "novel_view_interval": 10000,
         "worker_num": 0,
         'random_seed': 6033,
+        'use_wandb': True,
+        'wandb_project': 'NU-NeRF',
     }
 
     def _init_dataset(self):
@@ -46,7 +48,8 @@ class Trainer:
         dataset_dir = self.cfg['dataset_dir']
         for val_set_cfg in self.cfg['val_set_list']:
             name, val_type, val_cfg = val_set_cfg['name'], val_set_cfg['type'], val_set_cfg['cfg']
-            val_set = name2dataset[val_type](val_cfg, False, dataset_dir=dataset_dir)
+            val_cfg_merged = {**self.cfg, **val_cfg}
+            val_set = name2dataset[val_type](val_cfg_merged, False, dataset_dir=dataset_dir)
             val_set = DataLoader(val_set, 1, False, num_workers=self.cfg['worker_num'], collate_fn=dummy_collate_fn)
             self.val_set_list.append(val_set)
             self.val_set_names.append(name)
@@ -98,11 +101,23 @@ class Trainer:
         random.seed(self.cfg['random_seed'])
         self.model_name = cfg['name']
         self.model_dir = os.path.join('data/model', cfg['name'])
-        if not os.path.exists(self.model_dir): Path(self.model_dir).mkdir(exist_ok=True, parents=True)
+        if not os.path.exists(self.model_dir):
+            Path(self.model_dir).mkdir(exist_ok=True, parents=True)
         self.pth_fn = os.path.join(self.model_dir, 'model.pth')
         self.best_pth_fn = os.path.join(self.model_dir, 'model_best.pth')
 
     def run(self):
+        # Skip training if latest checkpoint already reached 200000 steps
+        if os.path.exists(self.pth_fn):
+            try:
+                checkpoint = torch.load(self.pth_fn, weights_only=False)
+                latest_step = checkpoint.get('step', 0)
+            except Exception:
+                latest_step = 0
+            if latest_step >= 200000:
+                print(f'[NU-NeRF] {self.model_name}: checkpoint at step {latest_step} (>= 200000); skipping training.')
+                return
+
         self._init_dataset()
         self._init_network()
         self._init_logger()
@@ -177,12 +192,16 @@ class Trainer:
                 torch.cuda.empty_cache()
                 val_results = {}
                 val_para = 0
+                val_images = {}
                 for vi, val_set in enumerate(self.val_set_list):
-                    val_results_cur, val_para_cur = self.val_evaluator(
+                    val_results_cur, val_para_cur, val_images_cur = self.val_evaluator(
                         self.network, self.val_losses + self.val_metrics, val_set, step,
                         self.model_name, val_set_name=self.val_set_names[vi])
                     for k, v in val_results_cur.items():
                         val_results[f'{self.val_set_names[vi]}-{k}'] = v
+                    if val_images_cur:
+                        for k, v in val_images_cur.items():
+                            val_images[f'val/{self.val_set_names[vi]}_{k}'] = v
                     # always use the final val set to select model!
                     val_para = val_para_cur
 
@@ -191,7 +210,9 @@ class Trainer:
                     best_para = val_para
                     self._save_model(step + 1, best_para, self.best_pth_fn)
                 self._log_data(val_results, step + 1, 'val')
-                del val_results, val_para, val_para_cur, val_results_cur
+                if val_images:
+                    self.logger.log_images(val_images, step + 1)
+                del val_results, val_para, val_para_cur, val_results_cur, val_images, val_images_cur
                 #exit(1)
             if (step + 1) % self.cfg['save_interval'] == 0:
                 save_fn = None
@@ -206,7 +227,7 @@ class Trainer:
     def _load_model(self):
         best_para, start_step = 0, 0
         if os.path.exists(self.pth_fn):
-            checkpoint = torch.load(self.pth_fn)
+            checkpoint = torch.load(self.pth_fn, weights_only=False)
             best_para = checkpoint['best_para']
             start_step = checkpoint['step']
             self.network.load_state_dict(checkpoint['network_state_dict'],strict=False)
@@ -225,7 +246,13 @@ class Trainer:
         }, save_fn)
 
     def _init_logger(self):
-        self.logger = Logger(self.model_dir)
+        self.logger = Logger(
+            self.model_dir,
+            use_wandb=self.cfg.get('use_wandb', False),
+            wandb_project=self.cfg.get('wandb_project', 'NU-NeRF'),
+            wandb_run_name=self.model_name,
+            wandb_config=self.cfg,
+        )
 
     def _log_data(self, results, step, prefix='train', verbose=False):
         log_results = {}

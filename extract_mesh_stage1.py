@@ -20,7 +20,7 @@ def main():
     else:
         network = name2renderer[cfg['network']](cfg, training=False)
     #network.color_network.bkgr = network.infinity_far_bkgr
-    ckpt = torch.load(f'data/model/{cfg["name"]}/model.pth')
+    ckpt = torch.load(f'data/model/{cfg["name"]}/model.pth', weights_only=False)
     step = ckpt['step']
     network.load_state_dict(ckpt['network_state_dict'], strict=False)
     network.eval().cuda()
@@ -35,6 +35,14 @@ def main():
                                                #lambda x: torch.where( network2.sdf_network.sdf(x) < 0, network.sdf_network_inner.sdf(x), torch.ones((x.shape[0],1),device='cuda:0')))
                                                lambda x:  network.sdf_network.sdf(x))
 
+    # scale vertices back to original scene size if pose_scale was used during training
+    pose_scale = float(cfg.get('pose_scale', 1.0))
+    vertices = vertices.cpu().numpy() if torch.is_tensor(vertices) else np.asarray(vertices)
+    triangles = triangles.cpu().numpy() if torch.is_tensor(triangles) else np.asarray(triangles)
+    if pose_scale != 1.0:
+        vertices = vertices * (1.0 / pose_scale)
+        print(f'[extract_mesh] scaled vertices back by 1/pose_scale = {1.0 / pose_scale}')
+
     # output geometry
     mesh = trimesh.Trimesh(vertices, triangles)
     mesh.faces = np.fliplr(mesh.faces)
@@ -43,11 +51,42 @@ def main():
     mesh.export(str(output_dir / f'{cfg["name"]}-{step}.ply'))
 
     # get fixed and simplified version of mesh for stage 2 rendering...(original marching cube mesh may have NaN normal/surfaces and do not have good curvature)
-    import pymeshlab
-    ms = pymeshlab.MeshSet()
-    ms.load_new_mesh(str(output_dir / f'{cfg["name"]}-{step}.ply'))
-    ms.meshing_isotropic_explicit_remeshing(maxsurfdist=pymeshlab.PercentageValue(0.5),targetlen=pymeshlab.PercentageValue(0.5) )
-    ms.save_current_mesh(str(output_dir / f'{cfg["name"]}-{step}_simplified.ply'))
+    try:
+        import pymeshlab
+        ms = pymeshlab.MeshSet()
+        ms.load_new_mesh(str(output_dir / f'{cfg["name"]}-{step}.ply'))
+        ms.meshing_isotropic_explicit_remeshing(maxsurfdist=pymeshlab.PercentageValue(0.5),targetlen=pymeshlab.PercentageValue(0.5) )
+        ms.save_current_mesh(str(output_dir / f'{cfg["name"]}-{step}_simplified.ply'))
+    except (ImportError, OSError) as e:
+        print(f'[Warning] pymeshlab not available ({e}), using open3d for mesh simplification instead')
+        import open3d as o3d
+        # Convert trimesh mesh to open3d format manually
+        print(f'[Debug] Original mesh: {len(mesh.vertices)} vertices, {len(mesh.faces)} faces')
+        mesh_o3d = o3d.geometry.TriangleMesh()
+        mesh_o3d.vertices = o3d.utility.Vector3dVector(mesh.vertices.astype(np.float64))
+        mesh_o3d.triangles = o3d.utility.Vector3iVector(mesh.faces.astype(np.int32))
+        num_triangles = np.asarray(mesh_o3d.triangles).shape[0]
+        print(f'[Debug] Open3D mesh: {len(mesh_o3d.vertices)} vertices, {num_triangles} triangles')
+        # Simplify mesh using quadric decimation (similar to pymeshlab remeshing)
+        # Target ~50% of original triangles
+        if num_triangles > 0:
+            target_triangles = max(100, num_triangles // 2)  # Ensure at least 100 triangles
+            print(f'[Debug] Simplifying to {target_triangles} triangles')
+            mesh_simplified = mesh_o3d.simplify_quadric_decimation(target_number_of_triangles=target_triangles)
+            # Remove degenerate triangles and fix normals
+            mesh_simplified.remove_degenerate_triangles()
+            mesh_simplified.remove_duplicated_triangles()
+            mesh_simplified.remove_duplicated_vertices()
+            mesh_simplified.remove_non_manifold_edges()
+            mesh_simplified.compute_vertex_normals()
+            o3d.io.write_triangle_mesh(str(output_dir / f'{cfg["name"]}-{step}_simplified.ply'), mesh_simplified)
+            print(f'[Debug] Simplified mesh saved: {len(mesh_simplified.vertices)} vertices, {np.asarray(mesh_simplified.triangles).shape[0]} triangles')
+        else:
+            print(f'[Warning] Mesh has no triangles, skipping simplification. Copying original mesh.')
+            # If simplification fails, just copy the original mesh
+            import shutil
+            shutil.copy(str(output_dir / f'{cfg["name"]}-{step}.ply'), 
+                       str(output_dir / f'{cfg["name"]}-{step}_simplified.ply'))
     
 
 if __name__ == "__main__":

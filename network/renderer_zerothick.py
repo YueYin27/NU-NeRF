@@ -118,6 +118,8 @@ class NeROShapeRenderer(nn.Module):
         'test_ray_num': 1024,
         'clip_sample_variance': True,
         'is_nerf': False,
+        'near_plane': 0.8,
+        'far_plane': 4.5,
         # dataset
         'database_name': 'nerf_synthetic/lego/black_800',
 
@@ -166,7 +168,7 @@ class NeROShapeRenderer(nn.Module):
 
     def _init_dataset(self):
         # train/test split
-        self.database = parse_database_name(self.cfg['database_name'], self.cfg['dataset_dir'])
+        self.database = parse_database_name(self.cfg['database_name'], self.cfg['dataset_dir'], self.cfg)
         self.train_ids, self.test_ids = get_database_split(self.database)
         self.train_ids = np.asarray(self.train_ids)
 
@@ -369,7 +371,8 @@ class NeROShapeRenderer(nn.Module):
         # rays_d = torch.sum(dirs[..., None, :] * poses[..., :3], -1)
         # rays_o = poses[:, :, -1].expand(rays_d.shape)
         rays_d = F.normalize(rays_d, dim=-1)
-        near, far = torch.full((rays_o.shape[0], 1), 0.8), torch.full((rays_o.shape[0], 1), 4.5)
+        near = torch.full((rays_o.shape[0], 1), self.cfg['near_plane'], device=rays_o.device, dtype=rays_o.dtype)
+        far = torch.full((rays_o.shape[0], 1), self.cfg['far_plane'], device=rays_o.device, dtype=rays_o.dtype)
 
         return rays_o, rays_d, near, far, poses[idxs]  # rn, 3, 4
 
@@ -575,7 +578,9 @@ class NeROShapeRenderer(nn.Module):
         n_importance = self.cfg['n_importance']
         up_sample_steps = self.cfg['up_sample_steps']
 
-        # sample points
+        # sample points (linear in t: 64 samples evenly between near and far)
+        # If (far - near) is huge (e.g. near=0.01, far=200), almost no samples hit the foreground,
+        # so the surface near the camera can look truncated. Use far_plane ~ scene scale (e.g. 4.5--10).
         batch_size = len(rays_o)
         z_vals = torch.linspace(0.0, 1.0, n_samples)  # sn
         z_vals = near + (far - near) * z_vals[None, :]  # rn,sn
@@ -900,6 +905,8 @@ class Stage2Renderer(nn.Module):
         # dataset
         'database_name': 'nerf_synthetic/lego/black_800',
         'is_nerf': False,
+        'near_plane': 0.3,
+        'far_plane': 5.0,
 
         # validation
         'test_downsample_ratio': True,
@@ -930,7 +937,7 @@ class Stage2Renderer(nn.Module):
         self.register_parameter(name="IORs", param=self.IORs)
 
         
-        checkpoint = torch.load(cfg['stage1_ckpt_dir'])     
+        checkpoint = torch.load(cfg['stage1_ckpt_dir'], weights_only=False)     
         cfg_stage1 = load_cfg(cfg['stage1_cfg_dir'])
         self.stage1_network = NeROShapeRenderer(cfg_stage1,training=False)
        # self.stage1_network.color_network.bkgr = self.stage1_network.infinity_far_bkgr
@@ -979,7 +986,7 @@ class Stage2Renderer(nn.Module):
 
     def _init_dataset(self):
         # train/test split
-        self.database = parse_database_name(self.cfg['database_name'], self.cfg['dataset_dir'])
+        self.database = parse_database_name(self.cfg['database_name'], self.cfg['dataset_dir'], self.cfg)
         self.train_ids, self.test_ids = get_database_split(self.database)
         self.train_ids = np.asarray(self.train_ids)
 
@@ -1181,7 +1188,8 @@ class Stage2Renderer(nn.Module):
         # rays_d = torch.sum(dirs[..., None, :] * poses[..., :3], -1)
         # rays_o = poses[:, :, -1].expand(rays_d.shape)
         rays_d = F.normalize(rays_d, dim=-1)
-        near, far = torch.full((rays_o.shape[0], 1),  0.3), torch.full((rays_o.shape[0], 1), 5.0)
+        near = torch.full((rays_o.shape[0], 1), self.cfg['near_plane'], device=rays_o.device, dtype=rays_o.dtype)
+        far = torch.full((rays_o.shape[0], 1), self.cfg['far_plane'], device=rays_o.device, dtype=rays_o.dtype)
 
         return rays_o, rays_d, near, far, poses[idxs]  # rn, 3, 4
 

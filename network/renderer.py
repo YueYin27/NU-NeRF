@@ -131,6 +131,8 @@ class NeROShapeRenderer(nn.Module):
         'test_ray_num': 1024,
         'clip_sample_variance': True,
         'is_nerf': False,
+        'near_plane': 0.8,
+        'far_plane': 4.5,
         # dataset
         'database_name': 'nerf_synthetic/lego/black_800',
 
@@ -386,7 +388,8 @@ class NeROShapeRenderer(nn.Module):
         # rays_d = torch.sum(dirs[..., None, :] * poses[..., :3], -1)
         # rays_o = poses[:, :, -1].expand(rays_d.shape)
         rays_d = F.normalize(rays_d, dim=-1)
-        near, far = torch.full((rays_o.shape[0], 1), 0.8), torch.full((rays_o.shape[0], 1), 4.5)
+        near = torch.full((rays_o.shape[0], 1), self.cfg['near_plane'], device=rays_o.device, dtype=rays_o.dtype)
+        far = torch.full((rays_o.shape[0], 1), self.cfg['far_plane'], device=rays_o.device, dtype=rays_o.dtype)
 
         return rays_o, rays_d, near, far, poses[idxs]  # rn, 3, 4
 
@@ -939,6 +942,8 @@ class Stage2Renderer(nn.Module):
         # dataset
         'database_name': 'nerf_synthetic/lego/black_800',
         'is_nerf': False,
+        'near_plane': 0.3,
+        'far_plane': 5.0,
 
         # validation
         'test_downsample_ratio': True,
@@ -968,7 +973,7 @@ class Stage2Renderer(nn.Module):
         self.register_parameter(name="IORs", param=self.IORs)
 
         
-        checkpoint = torch.load(cfg['stage1_ckpt_dir'])     
+        checkpoint = torch.load(cfg['stage1_ckpt_dir'], weights_only=False)     
         cfg_stage1 = load_cfg(cfg['stage1_cfg_dir'])
         self.stage1_network = NeROShapeRenderer(cfg_stage1,training=False)
        # self.stage1_network.color_network.bkgr = self.stage1_network.infinity_far_bkgr
@@ -1236,7 +1241,8 @@ class Stage2Renderer(nn.Module):
         # rays_d = torch.sum(dirs[..., None, :] * poses[..., :3], -1)
         # rays_o = poses[:, :, -1].expand(rays_d.shape)
         rays_d = F.normalize(rays_d, dim=-1)
-        near, far = torch.full((rays_o.shape[0], 1),  0.3), torch.full((rays_o.shape[0], 1), 5.0)
+        near = torch.full((rays_o.shape[0], 1), self.cfg['near_plane'], device=rays_o.device, dtype=rays_o.dtype)
+        far = torch.full((rays_o.shape[0], 1), self.cfg['far_plane'], device=rays_o.device, dtype=rays_o.dtype)
 
         return rays_o, rays_d,mask, near, far, poses[idxs]  # rn, 3, 4
 

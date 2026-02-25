@@ -19,7 +19,7 @@ def load_model(model, optim, model_dir, epoch=-1):
     else:
         pth = epoch
 
-    pretrained_model = torch.load(os.path.join(model_dir, '{}.pth'.format(pth)))
+    pretrained_model = torch.load(os.path.join(model_dir, '{}.pth'.format(pth)), weights_only=False)
     model.load_state_dict(pretrained_model['net'])
     optim.load_state_dict(pretrained_model['optim'])
     print('load {} epoch {}'.format(model_dir, pretrained_model['epoch'] + 1))
@@ -95,10 +95,24 @@ class Recorder(object):
 
 
 class Logger:
-    def __init__(self, log_dir):
+    def __init__(self, log_dir, use_wandb=True, wandb_project='NU-NeRF', wandb_run_name=None, wandb_config=None):
         self.log_dir = log_dir
         self.data = OrderedDict()
         self.writer = SummaryWriter(log_dir=log_dir)
+        self.use_wandb = use_wandb
+        if use_wandb:
+            try:
+                import wandb
+                self._wandb = wandb
+                self._wandb.init(
+                    project=wandb_project,
+                    name=wandb_run_name or os.path.basename(log_dir),
+                    config=wandb_config or {},
+                    dir=os.path.join(os.environ.get("TMPDIR", "/tmp"), "wandb"),
+                )
+            except Exception as e:
+                print(f'[Logger] wandb init failed: {e}; continuing without wandb')
+                self.use_wandb = False
 
     def log(self, data, prefix='train', step=None, verbose=False):
         msg = f'{prefix} '
@@ -106,10 +120,28 @@ class Logger:
             msg += f'{k} {v:.5f} '
             self.writer.add_scalar(f'{prefix}/{k}', v, step)
 
+        if self.use_wandb and step is not None:
+            try:
+                self._wandb.log({f'{prefix}/{k}': v for k, v in data.items()}, step=step)
+            except Exception as e:
+                print(f'[Logger] wandb.log failed: {e}')
+
         if verbose:
             print(msg)
         with open(os.path.join(self.log_dir, f'{prefix}.txt'), 'a') as f:
             f.write(msg + '\n')
+
+    def log_images(self, images_dict, step=None):
+        """Log images to wandb. images_dict: {name: numpy array (H,W,3) in [0,255]}."""
+        if not self.use_wandb or step is None or not images_dict:
+            return
+        try:
+            self._wandb.log(
+                {k: self._wandb.Image(v) for k, v in images_dict.items()},
+                step=step,
+            )
+        except Exception as e:
+            print(f'[Logger] wandb image log failed: {e}')
 
 
 def print_shape(obj):
