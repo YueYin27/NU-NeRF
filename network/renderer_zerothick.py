@@ -953,7 +953,7 @@ class Stage2Renderer(nn.Module):
         # for m in self.mesh_separated:
         #     self.bounding_boxes.append([np.min(m.vertices,axis=0),np.max(m.vertices,axis=0)])
 
-        self.scene = Scene(mesh_path)
+        self.scene = Scene(mesh_path, pose_scale=float(cfg.get('pose_scale', 1.0)))
         self.IORs_pred = IoRNetwork()
         self.IoRint_pred = IoRNetwork()
         self.thickness_pred = ThicknessNetwork()
@@ -1901,7 +1901,7 @@ class Stage2Renderer(nn.Module):
             #     pc = trimesh.PointCloud(vertices = points_for_nerf.reshape(-1,3).detach().cpu().numpy())
             #     trimesh.exchange.export.export_mesh(pc,'outer2.ply')
 
-            if i == 1:
+            if i == 1 and inner_mask.any():
                 alpha_nerf[inner_mask], gradients_inner, feature_vector, inv_s_inner, sdf = self.compute_sdf_alpha(points_for_nerf[inner_mask],
                                                                                                 dists[inner_mask],
                                                                                                 dirs[inner_mask],

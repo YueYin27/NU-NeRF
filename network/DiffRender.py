@@ -316,15 +316,16 @@ class Intersection:
         return len(self.ray)
 
 class Scene:
-    def __init__(self, mesh_path, cuda_device = 0):
+    def __init__(self, mesh_path, cuda_device = 0, pose_scale=1.0):
         self.optix_mesh = optix_mesh()
+        self.pose_scale = pose_scale
         self.update_mesh(mesh_path)
 
     def update_mesh(self, mesh_path):
         mesh = trimesh.load(mesh_path, process=False)
      #   assert mesh.is_watertight
         self.mesh = mesh
-        self.vertices = torch.tensor(mesh.vertices, dtype=Float, device=device)
+        self.vertices = torch.tensor(mesh.vertices, dtype=Float, device=device) * self.pose_scale
         self.faces = torch.tensor(mesh.faces, dtype=torch.long, device=device)
         self.triangles = self.vertices[self.faces] #[Fx3x3]
         self.pymesh_mesh = pymesh.meshio.load_mesh(mesh_path, drop_zero_dim=False)
